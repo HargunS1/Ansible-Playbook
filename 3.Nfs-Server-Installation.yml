@@ -1,0 +1,75 @@
+---
+- hosts: localhost  # Specify localhost as the target host
+  connection: local  # Use the local connection method
+  gather_facts: no
+  become: yes
+  become_method: sudo
+  become_user: root
+  tasks:
+     - name: to install nfs-utlis package
+       shell: |
+               sudo dnf install rpcbind nfs-utils -y
+
+     - name: to install git
+       shell: |
+               sudo dnf install git -y 
+
+     - name: now we will start and enable nfs-server service 
+       shell: |
+               sudo systemctl start nfs-server.service
+               sudo systemctl enable nfs-server.service
+
+     - name: now we will start rpcbind
+       shell: |
+               sudo systemctl enable rpcbind
+               sudo systemctl start rpcbind
+               sudo systemctl status rpcbind
+       register: command_output
+
+     - debug:
+               var: command_output.stdout_lines
+
+
+     - name: now willl verify the version of nfs protocol
+       shell: |
+               rpcinfo -p | grep nfs
+       register: command_output
+
+     - debug: 
+               var: command_output.stdout_lines
+
+     - name: now we will create another directory
+       file:
+         path: /srv/kubernetes/volume
+         state: directory
+
+     - name: to configure directory ownership
+       command: "chown -R nobody: /srv/kubernetes/volume"
+
+     - name: now to adjust the directory premissions
+       command: "chmod -R 777 /srv/kubernetes/volume"
+
+     - name: now we will restart the nfs daemon service
+       shell: |
+               sudo systemctl restart nfs-utils.service
+
+     - name: no we want to export an nfs share 
+       lineinfile:
+         path: /etc/exports
+         line: "/srv/kubernetes/volume   *(rw,sync,no_all_squash,no_root_squash)"
+         state: present
+
+     - name: now we will export the above created folder
+       shell: |
+               sudo exportfs -arv
+
+     - name: now adding helm repo
+       command: helm repo add nfs-subdir-external-provisioner https://kubernetes-sigs.github.io/nfs-subdir-external-provisioner
+
+     - name: Installing nfs subdir external provisioner
+       command: helm install nfs-subdir-external-provisioner nfs-subdir-external-provisioner/nfs-subdir-external-provisioner --set nfs.server=10.38.213.55 --set nfs.path=/srv/kubernetes/volume
+       
+
+     - name: CREATING STORAGE CLASS FOR NFS
+       shell: |
+               kubectl patch storageclass nfs-client -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'

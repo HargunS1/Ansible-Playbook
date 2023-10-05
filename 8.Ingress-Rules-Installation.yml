@@ -1,0 +1,250 @@
+---
+- hosts: localhost  # Specify localhost as the target host
+  connection: local  # Use the local connection method
+  gather_facts: no
+  become: yes
+  become_method: sudo
+  become_user: root
+  tasks:
+    - name: now we will create keycloak-ingress directory
+      file:
+       path: /home/opc/keycloak-ingress
+       state: directory
+
+    - name: Change to the keycloak directory
+      ansible.builtin.shell: cd /home/opc/keycloak-ingress
+      register: cd_result
+      become: yes  # If you need root/sudo privileges
+
+    - name: Generate SSL Certificate
+      ansible.builtin.shell: >
+        openssl req -subj '/CN=keycloak.kongpath.io/O=Test Keycloak./C=US'
+        -newkey rsa:2048 -nodes -keyout key.pem -x509 -days 365 -out certificate.pem
+      args:
+        chdir: /home/opc/keycloak-ingress
+      when: cd_result.rc == 0
+
+    - name: Change to the keycloak directory
+      ansible.builtin.shell: cd /home/opc/keycloak-ingress
+      register: cd_result
+      become: yes  # If you need root/sudo privileges
+
+    - name: Create TLS secret
+      ansible.builtin.shell: >
+        kubectl create secret tls keycloak-tls-secret --cert certificate.pem --key key.pem
+      args:
+        chdir: /home/opc/keycloak-ingress
+      when: cd_result.rc == 0
+
+    - name: Create keycloak-ingress.yaml file
+      copy:
+       content: |
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+           name: keycloak-ingress-1025
+           annotations:
+             konghq.com/protocols: https
+          spec:
+            ingressClassName: kong
+            tls:
+            - hosts:
+              - keycloak.kongpath.io
+              secretName: keycloak-tls-secret
+            rules:
+            - host: keycloak.kongpath.io
+              http:
+                paths:
+                - path: /
+                  pathType: ImplementationSpecific
+                  backend:
+                    service:
+                      name: example-kc-service
+                      port:
+                        number: 8443
+       dest: /home/opc/keycloak-ingress/keycloak-ingress.yaml
+
+    - name: Change to the keycloak-ingress directory
+      ansible.builtin.shell: cd /home/opc/keycloak-ingress
+      register: cd_result
+      become: yes  # If you need root/sudo privileges
+
+    - name: Apply Kubernetes Config
+      ansible.builtin.shell: kubectl apply -f keycloak-ingress.yaml
+      args:
+        chdir: /home/opc/keycloak-ingress
+      when: cd_result.rc == 0
+
+    - name: to create kubectl ingress
+      shell: |
+              kubectl get ingress
+      register: command_output
+
+    - debug:
+               var: command_output.stdout_lines
+
+    - name: now we will create darch-ingress directory
+      file:
+       path: /home/opc/darch-ingress
+       state: directory
+
+    - name: Change to the darch-ingress directory
+      ansible.builtin.shell: cd /home/opc/darch-ingress
+      register: cd_result
+      become: yes  # If you need root/sudo privileges
+
+    - name: Generate SSL Certificate
+      ansible.builtin.shell: >
+        openssl req -subj '/CN=darch.app.translab.io/O=Test Keycloak./C=US'
+        -newkey rsa:2048 -nodes -keyout darch-key.pem -x509 -days 365 -out darch-cert.pem
+      args:
+        chdir: /home/opc/darch-ingress
+      when: cd_result.rc == 0
+
+    - name: Change to the darch-ingress directory
+      ansible.builtin.shell: cd /home/opc/darch-ingress
+      register: cd_result
+      become: yes  # If you need root/sudo privileges
+
+    - name: Create TLS secret
+      ansible.builtin.shell: >
+        kubectl create secret tls darch-tls-secret --cert darch-cert.pem --key darch-key.pem -n spark-g1
+      args:
+        chdir: /home/opc/darch-ingress
+      when: cd_result.rc == 0
+
+    - name: Create darch-ingress.yaml file
+      copy:
+       content: |
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+            name: darch-ingress
+            namespace: spark-g1
+          spec:
+            ingressClassName: kong
+            tls:
+            - hosts:
+              - darch.app.translab.io
+              secretName: darch-tls-secret
+            rules:
+            - host: darch.app.translab.io
+              http:
+                paths:
+                - backend:
+                    service:
+                      name: react-service
+                      port:
+                        number: 80
+                  path: /react
+                  pathType: ImplementationSpecific
+                - backend:
+                    service:
+                      name: loopback-service
+                      port:
+                        number: 80
+                  path: /loop
+                  pathType: Prefix
+                - backend:
+                    service:
+                      name: airflow-webserver
+                      port:
+                        number: 8080
+                  path: /
+                  pathType: ImplementationSpecific
+       dest: /home/opc/darch-ingress/darch-ingress.yaml
+
+    - name: Change to the darch-ingress directory
+      ansible.builtin.shell: cd /home/opc/darch-ingress
+      register: cd_result
+      become: yes  # If you need root/sudo privileges
+
+    - name: Apply Kubernetes Config
+      ansible.builtin.shell: kubectl apply -f darch-ingress.yaml
+      args:
+        chdir: /home/opc/darch-ingress
+      when: cd_result.rc == 0
+
+    - name: to create kubectl ingress
+      shell: |
+              kubectl get ingress
+      register: command_output
+
+    - debug:
+               var: command_output.stdout_lines
+
+    - name: now we will create konga-ingress directory
+      file:
+       path: /home/opc/konga-ingress
+       state: directory
+
+    - name: Change to the konga-ingress directory
+      ansible.builtin.shell: cd /home/opc/konga-ingress
+      register: cd_result
+      become: yes  # If you need root/sudo privileges
+
+    - name: Generate SSL Certificate
+      ansible.builtin.shell: >
+        openssl req -subj '/CN=konga.kongpath.io/O=Test Keycloak./C=US'
+        -newkey rsa:2048 -nodes -keyout konga-key.pem -x509 -days 365 -out konga-cert.pem
+      args:
+        chdir: /home/opc/konga-ingress
+      when: cd_result.rc == 0
+
+    - name: Change to the konga-ingress directory
+      ansible.builtin.shell: cd /home/opc/konga-ingress
+      register: cd_result
+      become: yes  # If you need root/sudo privileges
+
+    - name: Create TLS secret
+      ansible.builtin.shell: >
+        kubectl create secret tls konga-tls-secret --cert konga-cert.pem --key konga-key.pem
+      args:
+        chdir: /home/opc/konga-ingress
+      when: cd_result.rc == 0
+
+    - name: Create konga-ingress.yaml file
+      copy:
+       content: |
+          apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata:
+           name: konga-ingress
+          spec:
+           ingressClassName: kong
+           tls:
+           - hosts:
+             - konga.kongpath.io
+             secretName: konga-tls-secret
+           rules:
+           - host: konga.kongpath.io
+             http:
+              paths:
+              - path: /
+                pathType: ImplementationSpecific
+                backend:
+                 service:
+                  name: konga
+                  port:
+                   number: 80
+
+       dest: /home/opc/konga-ingress/konga-ingress.yaml
+
+    - name: Change to the konga-ingress directory
+      ansible.builtin.shell: cd /home/opc/konga-ingress
+      register: cd_result
+      become: yes  # If you need root/sudo privileges
+
+    - name: Apply Kubernetes Config
+      ansible.builtin.shell: kubectl apply -f konga-ingress.yaml
+      args:
+        chdir: /home/opc/konga-ingress
+      when: cd_result.rc == 0
+
+    - name: to create kubectl ingress
+      shell: |
+              kubectl get ingress
+      register: command_output
+
+    - debug:
+                 var: command_output.stdout_lines                                                          

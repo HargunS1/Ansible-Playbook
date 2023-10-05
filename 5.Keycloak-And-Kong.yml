@@ -1,0 +1,195 @@
+---
+- hosts: localhost  # Specify localhost as the target host
+  connection: local  # Use the local connection method
+  gather_facts: no
+  become: yes
+  become_method: sudo
+  become_user: root
+  tasks:
+    - name: to update machine
+      shell: |
+              yum update -y --nobest 
+
+    - name: now we will create kong directory
+      file:
+       path: /home/opc/kong
+       state: directory
+
+    - name: now we will create konga directory
+      file:
+       path: /home/opc/konga
+       state: directory
+
+    - name: now we will create keycloak directory
+      file:
+       path: /home/opc/keycloak
+       state: directory
+
+    - name: Create example-kc.yaml file
+      copy:
+       content: |
+          apiVersion: k8s.keycloak.org/v2alpha1
+          kind: Keycloak
+          metadata:
+            name: example-kc
+          spec:
+            instances: 1
+            db:
+              vendor: postgres
+              host: 10.38.213.55 #change ip here
+              usernameSecret:
+                name: keycloak-db-secret
+                key: username
+              passwordSecret:
+                name: keycloak-db-secret
+                key: password
+            http:
+              tlsSecret: example-tls-secret
+            hostname:
+              strict: false
+              strictBackchannel: false
+            ingress:
+                enabled: true
+       dest: /home/opc/keycloak/example-kc.yaml 
+
+    - name: Change to the /home/opc/keycloak directory
+      command: cd /home/opc/keycloak
+
+    - name: Run kubectl apply
+      command: kubectl apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/21.0.2/kubernetes/keycloaks.k8s.keycloak.org-v1.yml
+      register: command_output
+
+    - debug:
+               var: command_output.stdout_lines
+
+    - name: Run kubectl apply Second
+      command: kubectl apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/21.0.2/kubernetes/keycloakrealmimports.k8s.keycloak.org-v1.yml
+      register: command_output
+
+    - debug:
+               var: command_output.stdout_lines
+
+    - name: Run kubectl apply third
+      command: kubectl apply -f https://raw.githubusercontent.com/keycloak/keycloak-k8s-resources/21.0.2/kubernetes/kubernetes.yml
+      register: command_output
+
+    - debug:
+               var: command_output.stdout_lines
+
+    - name: Change to the keycloak directory
+      ansible.builtin.shell: cd /home/opc/keycloak
+      register: cd_result
+      become: yes  # If you need root/sudo privileges
+
+    - name: Generate SSL Certificate
+      ansible.builtin.shell: >
+        openssl req -subj '/CN=keycloak.testpath.io/O=Test Keycloak./C=US'
+        -newkey rsa:2048 -nodes -keyout key.pem -x509 -days 365 -out certificate.pem
+      args:
+        chdir: /home/opc/keycloak
+      when: cd_result.rc == 0
+
+    - name: Change to the keycloak directory
+      ansible.builtin.shell: cd /home/opc/keycloak
+      register: cd_result
+      become: yes  # If you need root/sudo privileges
+
+    - name: Create TLS secret
+      ansible.builtin.shell: >
+        kubectl create secret tls example-tls-secret --cert certificate.pem --key key.pem
+      args:
+        chdir: /home/opc/keycloak
+      when: cd_result.rc == 0
+
+    - name: Change to the keycloak directory
+      ansible.builtin.shell: cd /home/opc/keycloak
+      register: cd_result
+      become: yes  # If you need root/sudo privileges
+
+    - name: Create Kubernetes Secret
+      ansible.builtin.shell: >
+        kubectl create secret generic keycloak-db-secret --from-literal=username=postgres --from-literal=password=123
+      args:
+        chdir: /home/opc/keycloak
+      when: cd_result.rc == 0
+    
+
+    - name: Change to the keycloak directory
+      ansible.builtin.shell: cd /home/opc/keycloak
+      register: cd_result
+      become: yes  # If you need root/sudo privileges
+
+    - name: Apply Kubernetes Config
+      ansible.builtin.shell: kubectl apply -f example-kc.yaml
+      args:
+        chdir: /home/opc/keycloak
+      when: cd_result.rc == 0
+
+    - name: Download Kong Chart using wget
+      ansible.builtin.command: >
+        wget https://github.com/Kong/charts/releases/download/kong-2.25.0/kong-2.25.0.tgz
+      args:
+        chdir: /home/opc/kong
+
+    - name: Verify download and change directory
+      ansible.builtin.shell: >
+        if [ -f /home/opc/kong/kong-2.25.0.tgz ]; then
+          cd /home/opc/kong
+        else
+          echo "Kong Chart download failed."
+        fi
+      register: cd_result
+      become: yes
+
+    - name: Extract Kong Chart using tar
+      ansible.builtin.shell: tar -xvf kong-2.25.0.tgz
+      args:
+        chdir: /home/opc/kong
+      register: tar_result
+      become: yes  # If you need root/sudo privileges
+
+    - name: Check the tar extraction status
+      ansible.builtin.fail:
+        msg: "Failed to extract Kong Chart."
+      when: tar_result.rc != 0
+
+    - name: Create values.yaml file
+      copy:
+       content: |
+          postgresql:
+            enabled: false
+          admin:
+            enabled: true
+            http:
+              enabled: true
+            tls:
+              parameters: []
+          image:
+            repository: cloudbeds/kong-oidc
+            tag: "revomatico"
+          env:
+            plugins: "bundled,oidc"
+            database: postgres
+            pg_host: 10.38.213.55            # Host of the Postgres server.
+            pg_port: 5432                  # Port of the Postgres server.
+            pg_user: postgres                  # Postgres user.
+            pg_password: 123               # Postgres user's password.
+            pg_database: postgres
+            pg_ssl: off
+          # pg_ssl_version: tlsv1_3
+            pg_ssl_verify: off
+            NGINX_PROXY_LARGE_CLIENT_HEADER_BUFFERS: 64 512K
+            NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
+            NGINX_PROXY_PROXY_BUFFERS: 64 160k
+            nginx_http_client_header_buffer_size: 256k
+            nginx_http_large_client_header_buffers: 4 256k
+            nginx_http_client_body_buffer_size: 256k
+       dest: /home/opc/kong/values.yml
+
+    - name: Run Helm Install
+      shell: |
+              helm install kong ./ -f ../values.yml
+      args:
+        chdir: /home/opc/kong/kong
+
+

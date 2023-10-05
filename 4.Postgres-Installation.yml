@@ -1,0 +1,174 @@
+---
+- hosts: localhost  # Specify localhost as the target host
+  connection: local  # Use the local connection method
+  gather_facts: no
+  become: yes
+  become_method: sudo
+  become_user: root
+  vars:
+    db_user: postgres
+    db_name: postgres
+  tasks:
+    - name: to update machine
+      shell: yum update -y --nobest
+
+    - name: to update python library
+      shell: yum -y install python3-psycopg2
+
+    - name: to stop firewall
+      shell: |
+        systemctl stop firewalld
+      register: command_output
+
+    - debug:
+        var: command_output.stdout_lines
+
+    - name: to disable firewall
+      shell: |
+        systemctl disable firewalld
+      register: command_output
+
+    - debug:
+        var: command_output.stdout_lines
+
+    - name: now unable the postgresql repo 14
+      shell: |
+        dnf install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm
+      register: command_output
+
+    - debug:
+        var: command_output.stdout_lines
+
+    - name: now we will disable the postgresql module
+      shell: |
+        yum -qy module disable postgresql
+      register: command_output
+
+    - debug:
+        var: command_output.stdout_lines
+
+    - name: to install postgresql
+      shell: |
+        yum install -y postgresql14 postgresql14-server -y
+      register: command_output
+
+    - debug:
+        var: command_output.stdout_lines
+
+    - name: now we will initialize the postgresql database
+      shell: |
+        /usr/pgsql-14/bin/postgresql-14-setup initdb
+      register: command_output
+
+    - debug:
+        var: command_output.stdout_lines
+
+    - name: now we will enable the service and start this
+      shell: |
+        systemctl start postgresql-14
+        systemctl enable postgresql-14
+
+    - name: status of postgresql database
+      shell: |
+        systemctl status postgresql-14
+      register: command_output
+
+    - debug:
+        var: command_output.stdout_lines
+
+    - name: Uncomment and modify the listen address in postgresql.conf
+      become_user: postgres
+      lineinfile:
+        path: /var/lib/pgsql/14/data/postgresql.conf
+        regexp: '^#?listen_addresses = .*'
+        line: "listen_addresses = '*'"
+
+    - name: Uncomment and modify the port in postgresql.conf
+      become_user: postgres
+      lineinfile:
+        path: /var/lib/pgsql/14/data/postgresql.conf
+        regexp: '^#?port = .*'
+        line: 'port = 5432'
+
+    - name: Modify password_encryption in postgresql.conf
+      become_user: postgres
+      lineinfile:
+        path: /var/lib/pgsql/14/data/postgresql.conf
+        regexp: '^#?password_encryption = .*'
+        line: 'password_encryption = md5'
+
+    - name: Add custom lines to pg_hba.conf
+      become_user: postgres
+      blockinfile:
+        path: /var/lib/pgsql/14/data/pg_hba.conf
+        block: |
+          # Custom rules for PostgreSQL access
+          host    all             all             all                     md5
+
+    - name: Restart PostgreSQL 14 service
+      systemd:
+        name: postgresql-14
+        state: restarted
+
+    - name: Change PostgreSQL user password
+      shell: |
+        psql -U postgres -c "ALTER USER postgres WITH PASSWORD '123';"
+      become_user: postgres
+      become: yes
+    
+    - name: Grant all privileges on the 'konga' database to user 'postgres'
+      shell: |
+        psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE postgres TO postgres;"
+      become_user: postgres  
+
+    - name: to create role for konga
+      shell: |
+        psql -U postgres -c "CREATE ROLE konga WITH LOGIN PASSWORD '123';"
+      become_user: postgres
+      become: yes
+
+    - name: to create role for keycloak
+      shell: |
+        psql -U postgres -c "CREATE ROLE keycloak WITH LOGIN PASSWORD '123';"
+      become_user: postgres
+      become: yes
+
+    - name: to create role for airflow
+      shell: |
+        psql -U postgres -c "CREATE ROLE airflow WITH LOGIN PASSWORD '123';"
+      become_user: postgres
+      become: yes
+
+    - name: Create the 'konga' database and set owner
+      shell: |
+        psql -U postgres -c "CREATE DATABASE konga OWNER postgres;"
+      become_user: postgres
+      become: yes
+
+    - name: Create the 'keycloak' database and set owner
+      shell: |
+        psql -U postgres -c "CREATE DATABASE keycloak OWNER postgres;"
+      become_user: postgres
+      become: yes
+
+    - name: Create the 'airflow' database and set owner
+      shell: |
+        psql -U postgres -c "CREATE DATABASE airflow OWNER postgres;"
+      become_user: postgres
+      become: yes
+
+    - name: Grant all privileges on the 'konga' database to user 'postgres'
+      shell: |
+        psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE konga TO postgres;"
+      become_user: postgres
+
+    - name: Grant all privileges on the 'keycloak' database to user 'postgres'
+      shell: |
+        psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE keycloak TO postgres;"
+      become_user: postgres
+
+    - name: Grant all privileges on the 'airflow' database to user 'postgres'
+      shell: |
+        psql -U postgres -c "GRANT ALL PRIVILEGES ON DATABASE airflow TO postgres;"
+      become_user: postgres
+

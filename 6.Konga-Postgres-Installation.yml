@@ -1,0 +1,174 @@
+---
+- hosts: localhost  # Specify localhost as the target host
+  connection: local  # Use the local connection method
+  gather_facts: no
+  become: yes
+  become_method: sudo
+  become_user: root
+  tasks:
+    - name: now we will create konga directory
+      file:
+       path: /home/opc/konga
+       state: directory
+
+    - name: Create postgres.yaml file
+      copy:
+       content: |
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: pg-creds
+            namespace: default
+          type: Opaque
+          data:
+            POSTGRES_DB: a29uZ2E=
+            POSTGRES_USER: YWRtaW4=
+            POSTGRES_PASSWORD: YWRtaW4xMjM=
+         
+          ---
+          kind: PersistentVolumeClaim
+          apiVersion: v1
+          metadata:
+            name: postgres-pv-claim
+            namespace: default
+            labels:
+              app: postgres
+          spec:
+            accessModes:
+              - ReadWriteMany
+            resources:
+              requests:
+                storage: 5Gi
+         
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: postgres
+            namespace: default
+            labels:
+              app: postgres
+          spec:
+            selector:
+              matchLabels:
+                app: postgres
+            replicas: 1
+            template:
+              metadata:
+                labels:
+                  app: postgres
+              spec:
+                containers:
+                  - name: postgres
+                    image: postgres:9.6
+                    imagePullPolicy: "IfNotPresent"
+                    ports:
+                      - containerPort: 5432
+                    envFrom:
+                      - secretRef:
+                          name: pg-creds
+                    volumeMounts:
+                      - mountPath: /var/lib/postgresql/data
+                        name: postgredb
+                volumes:
+                  - name: postgredb
+                    persistentVolumeClaim:
+                      claimName: postgres-pv-claim
+         
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: postgres
+            namespace: default
+            labels:
+              app: postgres
+          spec:
+            ports:
+              - port: 5432
+                targetPort: 5432
+                protocol: TCP
+            selector:
+              app: postgres
+       dest: /home/opc/konga/postgres.yaml
+
+    - name: Create konga.yaml file
+      copy:
+       content: |         
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: konga
+            namespace: default
+            labels:
+              name: konga
+              app: konga
+          spec:
+            selector:
+              matchLabels:
+                app: konga
+                name: konga
+            replicas: 1
+            template:
+              metadata:
+                labels:
+                  name: konga
+                  app: konga
+              spec:
+                containers:
+                - name: konga
+                  image: pantsel/konga
+                  env:
+                  - name: DB_ADAPTER
+                    value: postgres
+                  - name: DB_HOST
+                    value: postgres
+                  - name: DB_USER
+                    value: admin
+                  - name: DB_PASSWORD
+                    value: admin123
+                  - name: DB_DATABASE
+                    value: konga
+                  ports:
+                  - containerPort: 1337
+          ---
+
+          apiVersion: v1
+          kind: Service
+          metadata:
+            labels:
+              app: konga
+            name: konga
+            namespace: default
+          spec:
+            ports:
+              - protocol: TCP
+                port: 80
+                targetPort: 1337
+            selector:
+              app: konga
+       dest: /home/opc/konga/konga.yaml       
+
+    - name: Change to the konga directory
+      ansible.builtin.shell: cd /home/opc/konga
+      register: cd_result
+      become: yes  # If you need root/sudo privileges
+
+    - name: Applying the postgres.yaml
+      ansible.builtin.shell: >
+        kubectl apply -f postgres.yaml
+      args:
+        chdir: /home/opc/konga
+      when: cd_result.rc == 0    
+   
+    - name: Change to the konga directory
+      ansible.builtin.shell: cd /home/opc/konga
+      register: cd_result
+      become: yes  # If you need root/sudo privileges
+
+    - name: Applying the konga.yaml
+      ansible.builtin.shell: >
+        kubectl apply -f konga.yaml
+      args:
+        chdir: /home/opc/konga
+      when: cd_result.rc == 0

@@ -1,0 +1,106 @@
+---
+- hosts: localhost  # Specify localhost as the target host
+  connection: local  # Use the local connection method
+  gather_facts: no
+  become: yes
+  become_method: sudo
+  become_user: root
+  tasks:
+    - name: Download Helm binary
+      command: "wget https://get.helm.sh/helm-v3.12.0-rc.1-linux-amd64.tar.gz"
+      args:
+        chdir: /tmp  # Change this directory to your desired location
+
+    - name: Unpack Helm
+      command: "tar -zxvf helm-v3.12.0-rc.1-linux-amd64.tar.gz"
+      args:
+        chdir: /tmp  # Change this directory to your desired location
+
+    - name: Move Helm binary
+      command: "mv /tmp/linux-amd64/helm /usr/local/bin/helm"
+
+    - name: Add /usr/local/bin to $PATH
+      lineinfile:
+       path: ~/.bashrc  # Adjust this path based on your shell configuration
+       line: "export PATH=$PATH:/usr/local/bin"
+       state: present
+      when: not "'/usr/local/bin' in ansible_facts.ansible_env.PATH"
+
+    - name: Download Helm script
+      command: "curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3"
+
+    - name: Give execute permissions to the script
+      command: "chmod 700 get_helm.sh"
+
+    - name: permissions issue
+      command: "sudo chmod 600 /root/.kube/config"
+    
+    - name: to create helm folder
+      file:
+        path: /home/opc/Helm
+        state: directory
+
+    - name: Download Helm binary using wget
+      command: "wget https://get.helm.sh/helm-v3.11.2-linux-amd64.tar.gz -O /home/opc/Helm/helm-v3.11.2-linux-amd64.tar.gz"
+      args:
+        creates: /home/opc/Helm/helm-v3.11.2-linux-amd64.tar.gz
+
+    - name: Extract Helm binary
+      ansible.builtin.unarchive:
+        src: /home/opc/Helm/helm-v3.11.2-linux-amd64.tar.gz
+        dest: /home/opc/Helm/
+        remote_src: yes
+
+
+    - name: to add spark operator helm repo
+      command: helm repo add spark-operator https://googlecloudplatform.github.io/spark-on-k8s-operator
+    
+    - name: to create namespace
+      command: kubectl create namespace spark-g1
+      register: command_output
+    - debug:
+                  var: command_output.stdout_lines 
+
+    - name: to install the operator the mutating webhook
+      command: helm install my-release spark-operator/spark-operator --namespace spark-g1 --set webhook.enable=true
+
+    - name: to check if pods are running
+      shell: |
+              kubectl get pods -n spark-g1
+      register: command_output
+
+    - debug:
+                 var: command_output.stdout_lines
+   
+    - name: to create directory for sparkpvc
+      file:
+       path: /home/opc/Spark-Pvc
+       state: directory
+
+    - name: to Create spark-pvc.yaml
+      copy:
+       content: |
+          kind: PersistentVolumeClaim
+          apiVersion: v1
+          metadata:
+           name: spark-pvc
+           namespace: spark-g1
+          spec:
+           accessModes:
+            - ReadWriteOnce
+           resources:
+            requests:
+             storage: 8Gi
+       dest: /home/opc/Spark-Pvc/spark-pvc.yaml
+
+    - name: Change to the spark-pvc  directory
+      ansible.builtin.shell: cd /home/opc/Spark-Pvc
+      register: cd_result
+      become: yes  # If you need root/sudo privileges
+
+    - name: Applying the postgres.yaml
+      ansible.builtin.shell: >
+        kubectl apply -f spark-pvc.yaml
+      args:
+        chdir: /home/opc/Spark-Pvc
+      when: cd_result.rc == 0   

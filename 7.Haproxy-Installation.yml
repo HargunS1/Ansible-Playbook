@@ -1,0 +1,146 @@
+---
+- hosts: localhost  # Specify localhost as the target host
+  connection: local  # Use the local connection method
+  gather_facts: no
+  become: yes
+  become_method: sudo
+  become_user: root
+  tasks:
+    - name: to install haproxy
+      shell: |
+              yum install haproxy -y
+      register: command_output
+
+    - debug:
+               var: command_output.stdout_lines
+
+    - name: to edit the role
+      ansible.builtin.lineinfile:
+        path: /etc/haproxy/haproxy.cfg
+        line: |
+          frontend kong-frontend
+             bind *:80
+             stats uri /haproxy?stats
+             default_backend web-servers
+
+          backend web-servers
+              balance roundrobin
+              server automation 10.38.213.55:32197
+
+          frontend kong-frontend-https
+             bind *:443
+             mode tcp
+             stats uri /haproxy?stats
+             default_backend web-servers-https
+
+          backend web-servers-https
+              balance roundrobin
+              mode tcp
+              server automation 10.38.213.55:31527
+        insertafter: EOF 
+
+
+    - name: Fetch the existing ClusterRole
+      command: kubectl get clusterrole my-release-spark-operator -o yaml
+      register: existing_clusterrole
+      ignore_errors: yes
+
+    - name: Add pods/log resource if not already present
+      set_fact:
+        new_clusterrole_yaml: |
+          {{ existing_clusterrole.stdout | default('') }}
+          rules:
+          - apiGroups:
+            - ""
+            resources:
+            - pods
+            - pods/log
+            verbs:
+            - '*'
+          - apiGroups:
+            - ""
+            resources:
+            - services
+            - configmaps
+            - secrets
+            verbs:
+            - create
+            - get
+            - delete
+            - update
+          - apiGroups:
+            - extensions
+            - networking.k8s.io
+            resources:
+            - ingresses
+            verbs:
+            - create
+            - get
+            - delete
+          - apiGroups:
+            - ""
+            resources:
+            - nodes
+            verbs:
+            - get
+          - apiGroups:
+            - ""
+            resources:
+            - events
+            verbs:
+            - create
+            - update
+            - patch
+          - apiGroups:
+            - ""
+            resources:
+            - resourcequotas
+            verbs:
+            - get
+            - list
+            - watch
+          - apiGroups:
+            - apiextensions.k8s.io
+            resources:
+            - customresourcedefinitions
+            verbs:
+            - create
+            - get
+            - update
+            - delete
+          - apiGroups:
+            - admissionregistration.k8s.io
+            resources:
+            - mutatingwebhookconfigurations
+            - validatingwebhookconfigurations
+            verbs:
+            - create
+            - get
+            - update
+            - delete
+          - apiGroups:
+            - sparkoperator.k8s.io
+            resources:
+            - sparkapplications
+            - sparkapplications/status
+            - scheduledsparkapplications
+            - scheduledsparkapplications/status
+            verbs:
+            - '*'
+          - apiGroups:
+            - batch
+            resources:
+            - jobs
+            verbs:
+            - delete
+
+    - name: Apply the modified ClusterRole
+      command: kubectl apply -f -
+      vars:
+        ansible_become: yes
+        ansible_become_user: root
+      args:
+        stdin: "{{ new_clusterrole_yaml }}"
+
+    - name: to apply cluster role binding
+      command: kubectl create clusterrolebinding airflow-spark --clusterrole=my-release-spark-operator --serviceaccount=spark-g1:airflow-worker

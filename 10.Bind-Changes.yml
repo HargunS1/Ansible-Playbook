@@ -1,0 +1,50 @@
+---
+- hosts: localhost  # Specify localhost as the target host
+  connection: local  # Use the local connection method
+  gather_facts: no
+  become: yes
+  become_method: sudo
+  become_user: root
+  tasks:
+    - name: to install Bind package
+      shell: |
+                yum install bind -y
+      register: command_output
+
+    - debug:
+               var: command_output.stdout_lines
+    - name: to remove file
+      shell: |
+                rm -rf /etc/named.conf
+
+    - name: To transfer file to server named.conf file
+      ansible.builtin.copy:
+        src:  named.conf
+        dest: /etc/
+
+    - name: To Transfer file to server kongpath.local.db
+      ansible.builtin.copy:
+        src:  kongpath.local.db
+        dest: /var/named/
+ 
+    - name: Replace search and nameserver lines in resolv.conf
+      lineinfile:
+        path: /etc/resolv.conf  # Adjust the path to your resolv.conf file if necessary
+        regexp: "^search.*$|^nameserver.*$"  # Regular expression to match the lines
+        line: |
+          search kongpath.io kubernetes.oraclevcn.com subbf8ac35c2.kubernetes.oraclevcn.com
+          nameserver 10.38.213.55
+
+    - name: to enter commands so that it can update their
+      shell: |
+              sudo chattr +i /etc/resolv.conf
+              systemctl restart named
+              systemctl restart NetworkManager
+   
+    - name: to get output of ns lookup
+      shell: |
+              nslookup keycloak.kongpath.io
+      register: command_output
+
+    - debug:
+               var: command_output.stdout_lines

@@ -1,0 +1,46 @@
+---
+- hosts: localhost  # Specify localhost as the target host
+  connection: local  # Use the local connection method
+  gather_facts: no
+  become: yes
+  become_method: sudo
+  become_user: root
+  tasks:
+    - name: Clone Apache Airflow repository
+      ansible.builtin.git:
+          repo: https://github.com/apache/airflow.git
+          dest: /home/opc/airflow
+          version: "2.5.3"
+      become: yes  # If you need elevated privileges
+
+    - name: to delete values.yaml file form airflow
+      shell: |
+              rm -rf /home/opc/airflow/chart/values.yaml
+              rm -rf /home/opc/airflow/chart/templates/configmaps/configmap.yaml
+              chmod 777 /home/opc/airflow
+              chmod 777 /home/opc/airflow/chart
+      register: command_output
+
+    - debug:
+               var: command_output.stdout_lines
+
+    - name: to run scp  command
+      ansible.builtin.copy:
+        src: values.yaml
+        dest: /home/opc/airflow/chart/
+
+    - name: to run scp  command
+      ansible.builtin.copy:
+        src: configmap.yaml
+        dest: /home/opc/airflow/chart/templates/configmaps/
+
+    - name: Change to the airflow directory
+      ansible.builtin.shell: cd /home/opc/airflow/chart
+      register: cd_result
+      become: yes  # If you need root/sudo privileges
+
+    - name: Apply Kubernetes Config
+      ansible.builtin.shell: helm install airflow ./ -f values.yaml -n spark-g1
+      args:
+        chdir: /home/opc/airflow/chart
+      when: cd_result.rc == 0
